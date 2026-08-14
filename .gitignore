@@ -33,6 +33,11 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
+# sensitive staff data (managed outside version control)
+/data/
+*.xlsx
+*.xls
+
 # vercel
 .vercel
 

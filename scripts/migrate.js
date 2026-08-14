@@ -18,8 +18,10 @@ async function runMigration() {
   console.log('Initializing mass data transfer, Chief... 🚀');
 
   try {
-    // 2. Read the Excel Directory
-    const filePath = path.resolve(__dirname, '../Staff Directory 2026 (LEAVE SCHEDULE).xlsx');
+    // 2. Read the Excel Directory (kept outside version control in /data)
+    const filePath = process.env.STAFF_DIRECTORY_XLSX
+      ? path.resolve(process.env.STAFF_DIRECTORY_XLSX)
+      : path.resolve(__dirname, '../data/staff-directory.xlsx');
     const workbook = xlsx.readFile(filePath);
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
     const staffList = xlsx.utils.sheet_to_json(sheet);
