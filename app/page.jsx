@@ -1,11 +1,14 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { databases } from '../lib/appwrite';
+import { useRouter } from 'next/navigation';
+import { databases, account } from '../lib/appwrite';
 import { ID, Query } from 'appwrite';
-import { Users, CalendarDays, ClipboardCheck, Search, Filter, MoreHorizontal, X, Briefcase, Calendar, CheckCircle, Plus, Clock } from 'lucide-react';
+import { Users, CalendarDays, ClipboardCheck, Search, Filter, MoreHorizontal, X, Briefcase, Calendar, CheckCircle, Plus, Clock, Check, LogOut } from 'lucide-react';
 
 export default function Dashboard() {
+  const router = useRouter();
+  const [currentUser, setCurrentUser] = useState(null);
   const [staffList, setStaffList] = useState([]);
   const [leaveRequests, setLeaveRequests] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -26,14 +29,18 @@ export default function Dashboard() {
   });
 
   useEffect(() => {
-    async function fetchData() {
+    async function checkSecurityAndFetch() {
       try {
-        // Fetch both vaults simultaneously with expanded limits!
+        // 1. Check if the user is actually logged in
+        const session = await account.get();
+        setCurrentUser(session);
+
+        // 2. If secure, fetch the vault data
         const [staffResponse, leaveResponse] = await Promise.all([
           databases.listDocuments(
             String(process.env.NEXT_PUBLIC_APPWRITE_DATABASE_ID),
             String(process.env.NEXT_PUBLIC_APPWRITE_COLLECTION_ID),
-            [Query.limit(500)] // Unlocks the 25-record limit
+            [Query.limit(500)]
           ),
           databases.listDocuments(
             String(process.env.NEXT_PUBLIC_APPWRITE_DATABASE_ID),
@@ -45,13 +52,25 @@ export default function Dashboard() {
         setStaffList(staffResponse.documents);
         setLeaveRequests(leaveResponse.documents);
       } catch (error) {
-        console.error('Error fetching vaults:', error);
+        console.error('Security Check Failed:', error);
+        // If they are not logged in, violently kick them to the login screen!
+        router.push('/login');
       } finally {
         setLoading(false);
       }
     }
-    fetchData();
-  }, []);
+    
+    checkSecurityAndFetch();
+  }, [router]);
+
+  const handleLogout = async () => {
+    try {
+      await account.deleteSession('current');
+      router.push('/login');
+    } catch (error) {
+      console.error('Logout failed:', error);
+    }
+  };
 
   const pendingApprovalsCount = leaveRequests.filter(req => req.status === 'Pending Approval').length;
   const activeOnLeaveCount = leaveRequests.filter(req => req.status === 'Approved').length; 
@@ -64,6 +83,13 @@ export default function Dashboard() {
   const openStaffPanel = (staff) => {
     setSelectedStaff(staff);
     setIsPanelOpen(true);
+  };
+
+  const calculateDays = (start, end) => {
+    const startDate = new Date(start);
+    const endDate = new Date(end);
+    const diffTime = Math.abs(endDate - startDate);
+    return Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
   };
 
   const handleLeaveSubmit = async (e) => {
@@ -100,6 +126,54 @@ export default function Dashboard() {
     }
   };
 
+  const handleStatusUpdate = async (request, newStatus) => {
+    try {
+      await databases.updateDocument(
+        String(process.env.NEXT_PUBLIC_APPWRITE_DATABASE_ID),
+        String(process.env.NEXT_PUBLIC_APPWRITE_LEAVE_COLLECTION_ID),
+        request.$id,
+        { status: newStatus }
+      );
+
+      setLeaveRequests(prev => prev.map(req => req.$id === request.$id ? { ...req, status: newStatus } : req));
+
+      if (newStatus === 'Approved') {
+        const daysRequested = calculateDays(request.start_date, request.end_date);
+        const staffMember = staffList.find(s => s.$id === request.staff_id);
+        const newBalance = Math.max(0, staffMember.annual_leave_balance - daysRequested);
+
+        await databases.updateDocument(
+          String(process.env.NEXT_PUBLIC_APPWRITE_DATABASE_ID),
+          String(process.env.NEXT_PUBLIC_APPWRITE_COLLECTION_ID),
+          staffMember.$id,
+          { annual_leave_balance: newBalance }
+        );
+
+        setStaffList(prev => prev.map(staff => staff.$id === staffMember.$id ? { ...staff, annual_leave_balance: newBalance } : staff));
+        
+        if (selectedStaff?.$id === staffMember.$id) {
+          setSelectedStaff(prev => ({ ...prev, annual_leave_balance: newBalance }));
+        }
+      }
+
+    } catch (error) {
+      console.error('Error updating status:', error);
+      alert('Failed to update leave status. Check your permissions.');
+    }
+  };
+
+  // If loading and no user yet, show a clean loading screen
+  if (loading && !currentUser) {
+    return (
+      <div className="min-h-screen bg-slate-200/60 flex items-center justify-center">
+        <div className="flex flex-col items-center space-y-4">
+          <div className="w-10 h-10 border-4 border-emerald-700 border-t-transparent rounded-full animate-spin"></div>
+          <p className="text-slate-600 font-medium">Verifying Credentials...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-200/60 p-6 md:p-10 font-sans relative overflow-hidden flex flex-col">
       <div className="max-w-7xl mx-auto w-full space-y-6 flex-1 flex flex-col">
@@ -109,15 +183,26 @@ export default function Dashboard() {
           <div>
             <h1 className="text-3xl font-bold text-slate-800 tracking-tight">NILD HR Portal</h1>
             <p className="text-slate-500 mt-1">Manage staff leave schedules and balances</p>
-            <p className="text-xs text-emerald-700 font-semibold mt-2 tracking-wide uppercase">Engineered by Hawea-Heritage</p>
+            <p className="text-xs text-emerald-700 font-semibold mt-2 tracking-wide uppercase">
+              Admin: {currentUser?.email || 'Authorized User'}
+            </p>
           </div>
-          <button 
-            onClick={() => setIsLeaveModalOpen(true)}
-            className="flex items-center space-x-2 bg-emerald-700 hover:bg-emerald-800 text-white px-5 py-2.5 rounded-lg font-medium transition-colors shadow-sm"
-          >
-            <Plus size={18} />
-            <span>New Leave Request</span>
-          </button>
+          <div className="flex items-center space-x-3">
+            <button 
+              onClick={() => setIsLeaveModalOpen(true)}
+              className="flex items-center space-x-2 bg-emerald-700 hover:bg-emerald-800 text-white px-5 py-2.5 rounded-lg font-medium transition-colors shadow-sm"
+            >
+              <Plus size={18} />
+              <span>New Leave Request</span>
+            </button>
+            <button 
+              onClick={handleLogout}
+              className="flex items-center space-x-2 bg-white hover:bg-rose-50 text-slate-600 hover:text-rose-600 border border-slate-300 hover:border-rose-200 px-4 py-2.5 rounded-lg font-medium transition-colors shadow-sm"
+              title="Secure Logout"
+            >
+              <LogOut size={18} />
+            </button>
+          </div>
         </div>
 
         {/* Statistical Cards */}
@@ -170,7 +255,6 @@ export default function Dashboard() {
             </button>
           </div>
 
-          {/* Scrollable Container with Sticky Header */}
           <div className="overflow-y-auto flex-1 relative custom-scrollbar">
             <table className="w-full text-left border-collapse">
               <thead className="sticky top-0 z-10 bg-slate-100/95 backdrop-blur-sm shadow-sm">
@@ -379,7 +463,7 @@ export default function Dashboard() {
                     leaveRequests
                       .filter(req => req.staff_id === selectedStaff.$id)
                       .map(request => (
-                        <div key={request.$id} className="bg-white p-4 rounded-lg border border-slate-200/80 shadow-sm flex flex-col gap-2">
+                        <div key={request.$id} className="bg-white p-4 rounded-lg border border-slate-200/80 shadow-sm flex flex-col gap-3">
                           <div className="flex justify-between items-start">
                             <span className="text-sm font-medium text-slate-800">{request.leave_type}</span>
                             <span className={`text-[10px] font-bold uppercase px-2 py-1 rounded-full ${
@@ -390,10 +474,29 @@ export default function Dashboard() {
                               {request.status}
                             </span>
                           </div>
-                          <div className="text-xs text-slate-500 flex justify-between">
+                          
+                          <div className="text-xs text-slate-500 flex justify-between pb-2 border-b border-slate-100">
                             <span>From: {request.start_date}</span>
                             <span>To: {request.end_date}</span>
                           </div>
+
+                          {request.status === 'Pending Approval' && (
+                            <div className="flex justify-end space-x-2 pt-1">
+                              <button 
+                                onClick={() => handleStatusUpdate(request, 'Rejected')}
+                                className="px-3 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-50 rounded-md transition-colors border border-transparent hover:border-rose-200"
+                              >
+                                Reject
+                              </button>
+                              <button 
+                                onClick={() => handleStatusUpdate(request, 'Approved')}
+                                className="px-3 py-1.5 text-xs font-medium bg-emerald-600 text-white hover:bg-emerald-700 rounded-md transition-colors shadow-sm flex items-center"
+                              >
+                                <Check size={12} className="mr-1" />
+                                Approve
+                              </button>
+                            </div>
+                          )}
                         </div>
                       ))
                   )}
