@@ -4,13 +4,14 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { databases, account } from '../lib/appwrite';
 import { ID, Query } from 'appwrite';
-import { Users, CalendarDays, ClipboardCheck, Search, Filter, MoreHorizontal, X, Briefcase, Calendar, CheckCircle, Plus, Clock, Check, LogOut } from 'lucide-react';
+import { Users, CalendarDays, ClipboardCheck, Search, Filter, MoreHorizontal, X, Briefcase, Calendar, CheckCircle, Plus, Clock, Check, LogOut, ShieldAlert } from 'lucide-react';
 
 export default function Dashboard() {
   const router = useRouter();
   const [currentUser, setCurrentUser] = useState(null);
   const [staffList, setStaffList] = useState([]);
   const [leaveRequests, setLeaveRequests] = useState([]);
+  const [leavePolicies, setLeavePolicies] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
   
@@ -31,12 +32,10 @@ export default function Dashboard() {
   useEffect(() => {
     async function checkSecurityAndFetch() {
       try {
-        // 1. Check if the user is actually logged in
         const session = await account.get();
         setCurrentUser(session);
 
-        // 2. If secure, fetch the vault data
-        const [staffResponse, leaveResponse] = await Promise.all([
+        const [staffResponse, leaveResponse, policyResponse] = await Promise.all([
           databases.listDocuments(
             String(process.env.NEXT_PUBLIC_APPWRITE_DATABASE_ID),
             String(process.env.NEXT_PUBLIC_APPWRITE_COLLECTION_ID),
@@ -46,14 +45,19 @@ export default function Dashboard() {
             String(process.env.NEXT_PUBLIC_APPWRITE_DATABASE_ID),
             String(process.env.NEXT_PUBLIC_APPWRITE_LEAVE_COLLECTION_ID),
             [Query.limit(500)]
+          ),
+          databases.listDocuments(
+            String(process.env.NEXT_PUBLIC_APPWRITE_DATABASE_ID),
+            String(process.env.NEXT_PUBLIC_APPWRITE_POLICY_COLLECTION_ID),
+            [Query.limit(100)]
           )
         ]);
         
         setStaffList(staffResponse.documents);
         setLeaveRequests(leaveResponse.documents);
+        setLeavePolicies(policyResponse.documents);
       } catch (error) {
-        console.error('Security Check Failed:', error);
-        // If they are not logged in, violently kick them to the login screen!
+        console.error('Vault Access Error:', error);
         router.push('/login');
       } finally {
         setLoading(false);
@@ -155,14 +159,12 @@ export default function Dashboard() {
           setSelectedStaff(prev => ({ ...prev, annual_leave_balance: newBalance }));
         }
       }
-
     } catch (error) {
       console.error('Error updating status:', error);
       alert('Failed to update leave status. Check your permissions.');
     }
   };
 
-  // If loading and no user yet, show a clean loading screen
   if (loading && !currentUser) {
     return (
       <div className="min-h-screen bg-slate-200/60 flex items-center justify-center">
@@ -236,8 +238,28 @@ export default function Dashboard() {
           </div>
         </div>
 
+        {/* Dynamic Policy Engine Banner */}
+        <div className="bg-emerald-900 text-emerald-50 p-4 rounded-xl shadow-sm flex flex-col sm:flex-row justify-between items-center gap-3">
+          <div className="flex items-center space-x-3">
+            <div className="p-2 bg-emerald-800 rounded-lg text-emerald-200">
+              <ShieldAlert size={20} />
+            </div>
+            <div>
+              <h4 className="text-sm font-bold">Active Institutional Policies Loaded</h4>
+              <p className="text-xs text-emerald-200">System is reading rules dynamically from Appwrite vault.</p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {leavePolicies.map(policy => (
+              <span key={policy.$id} className="text-xs bg-emerald-800 text-emerald-100 px-3 py-1 rounded-full border border-emerald-700 font-medium">
+                {policy.leave_type}: {policy.default_days} Days Max
+              </span>
+            ))}
+          </div>
+        </div>
+
         {/* Main Data Table Section */}
-        <div className="bg-slate-50 rounded-xl shadow-sm border border-slate-200/60 flex flex-col flex-1 overflow-hidden min-h-[400px]">
+        <div className="bg-slate-50 rounded-xl shadow-sm border border-slate-200/60 flex flex-col flex-1 overflow-hidden min-h-[350px]">
           <div className="p-5 border-b border-slate-200/60 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-50 shrink-0">
             <div className="relative w-full sm:w-96">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
@@ -282,29 +304,46 @@ export default function Dashboard() {
                     </td>
                   </tr>
                 ) : (
-                  filteredStaff.map((staff) => (
-                    <tr 
-                      key={staff.$id} 
-                      onClick={() => openStaffPanel(staff)}
-                      className="hover:bg-slate-100/80 transition-colors group cursor-pointer"
-                    >
-                      <td className="px-6 py-4">
-                        <div className="font-medium text-slate-800 group-hover:text-emerald-700 transition-colors">{staff.staff_name}</div>
-                        <div className="text-xs text-slate-400 mt-0.5">ID: {staff.$id.substring(0, 8)}</div>
-                      </td>
-                      <td className="px-6 py-4 text-sm text-slate-600">{staff.designation}</td>
-                      <td className="px-6 py-4 text-center">
-                        <span className="inline-flex items-center justify-center px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200/60">
-                          {staff.annual_leave_balance} Days
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 text-right">
-                        <button className="text-slate-400 hover:text-emerald-700 transition-colors p-1 rounded-md hover:bg-emerald-50">
-                          <MoreHorizontal size={20} />
-                        </button>
-                      </td>
-                    </tr>
-                  ))
+                  filteredStaff.map((staff) => {
+                    // Logic to check if this specific staff member has any pending requests
+                    const hasPendingRequest = leaveRequests.some(
+                      req => req.staff_id === staff.$id && req.status === 'Pending Approval'
+                    );
+
+                    return (
+                      <tr 
+                        key={staff.$id} 
+                        onClick={() => openStaffPanel(staff)}
+                        className="hover:bg-slate-100/80 transition-colors group cursor-pointer"
+                      >
+                        <td className="px-6 py-4">
+                          <div className="flex items-center space-x-3">
+                            <div className="font-medium text-slate-800 group-hover:text-emerald-700 transition-colors">
+                              {staff.staff_name}
+                            </div>
+                            {/* Visual Notification Badge for Pending Approvals */}
+                            {hasPendingRequest && (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-700 border border-amber-200 shadow-sm animate-pulse">
+                                Action Required
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-xs text-slate-400 mt-0.5">ID: {staff.$id.substring(0, 8)}</div>
+                        </td>
+                        <td className="px-6 py-4 text-sm text-slate-600">{staff.designation}</td>
+                        <td className="px-6 py-4 text-center">
+                          <span className="inline-flex items-center justify-center px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200/60">
+                            {staff.annual_leave_balance} Days
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          <button className="text-slate-400 hover:text-emerald-700 transition-colors p-1 rounded-md hover:bg-emerald-50">
+                            <MoreHorizontal size={20} />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
@@ -342,17 +381,16 @@ export default function Dashboard() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1.5">Leave Type</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1.5">Leave Type (Dynamic Policy Engine)</label>
                 <select 
                   required
                   value={formData.leaveType}
                   onChange={(e) => setFormData({...formData, leaveType: e.target.value})}
                   className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-600 transition-all text-sm text-slate-700"
                 >
-                  <option value="Annual Leave">Annual Leave</option>
-                  <option value="Sick Leave">Sick Leave</option>
-                  <option value="Maternity Leave">Maternity Leave</option>
-                  <option value="Compassionate Leave">Compassionate Leave</option>
+                  {leavePolicies.map(policy => (
+                    <option key={policy.$id} value={policy.leave_type}>{policy.leave_type} ({policy.default_days} Days Max)</option>
+                  ))}
                 </select>
               </div>
 
