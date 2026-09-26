@@ -3,27 +3,27 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ID } from 'appwrite';
-import { account } from '../../lib/appwrite';
+import { useAuth } from '../../components/AuthProvider';
 
-export default function SignupPage() {
+export default function LoginPage() {
+  const { login } = useAuth();
   const router = useRouter();
-  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSignup = async (event) => {
+  const handleLogin = async (event) => {
     event.preventDefault();
     setError('');
     setIsSubmitting(true);
 
     try {
-      await account.create(ID.unique(), email, password, name);
-      router.replace('/login');
+      await login(email, password);
+      router.replace('/');
     } catch (err) {
-      setError(err?.message || 'Registration failed. Please try again.');
+      setError(err?.message || 'Unable to sign in. Please check your credentials.');
+    } finally {
       setIsSubmitting(false);
     }
   };
@@ -34,28 +34,13 @@ export default function SignupPage() {
         <div className="text-center mb-6">
           <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">National Institute for Legislative and Democratic Studies</p>
           <h1 className="text-3xl font-bold text-slate-800 tracking-tight mt-2">NILDS HR Portal</h1>
-          <p className="text-slate-500 mt-1">Register to access leave schedules and balances</p>
+          <p className="text-slate-500 mt-1">Sign in to manage leave schedules and balances</p>
         </div>
 
         <div className="bg-slate-50 p-8 rounded-2xl shadow-sm border border-slate-200/60">
-          <h2 className="text-lg font-bold text-slate-800 mb-6">Staff Registration</h2>
+          <h2 className="text-lg font-bold text-slate-800 mb-6">Staff Login</h2>
 
-          <form onSubmit={handleSignup} className="space-y-5">
-            <div>
-              <label htmlFor="name" className="block text-sm font-medium text-slate-700 mb-1.5">
-                Full Name
-              </label>
-              <input
-                id="name"
-                type="text"
-                required
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                className="w-full px-4 py-2.5 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-600 transition-all text-sm text-slate-700"
-                placeholder="e.g. Mustapha Abdulsalam"
-              />
-            </div>
-
+          <form onSubmit={handleLogin} className="space-y-5">
             <div>
               <label htmlFor="email" className="block text-sm font-medium text-slate-700 mb-1.5">
                 Email Address
@@ -81,11 +66,11 @@ export default function SignupPage() {
                 type="password"
                 required
                 minLength={8}
-                autoComplete="new-password"
+                autoComplete="current-password"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 className="w-full px-4 py-2.5 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-600 transition-all text-sm text-slate-700"
-                placeholder="Minimum 8 characters"
+                placeholder="Enter your password"
               />
             </div>
 
@@ -100,17 +85,21 @@ export default function SignupPage() {
               disabled={isSubmitting}
               className="w-full py-2.5 rounded-lg text-sm font-semibold text-white bg-emerald-700 hover:bg-emerald-800 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {isSubmitting ? 'Creating account...' : 'Create account'}
+              {isSubmitting ? 'Signing in...' : 'Sign in'}
             </button>
           </form>
 
           <p className="mt-6 text-center text-sm text-slate-500">
-            Already registered?{' '}
-            <Link href="/login" className="font-semibold text-emerald-700 hover:text-emerald-800">
-              Sign in
+            New staff member?{' '}
+            <Link href="/signup" className="font-semibold text-emerald-700 hover:text-emerald-800">
+              Create an account
             </Link>
           </p>
         </div>
+
+        <p className="text-xs text-emerald-700 font-semibold mt-4 tracking-wide uppercase text-center">
+          Engineered by Hawea-Heritage
+        </p>
       </div>
     </div>
   );
